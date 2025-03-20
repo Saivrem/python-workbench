@@ -1,28 +1,51 @@
-from os import path, listdir
+from pathlib import Path
+import logging
 
-from disk_utils.file_consumer import FileConsumer
+from disk_utils.consumer.file_consumer import FileConsumer
 
 
 class FileWalker:
-    __slots__ = ["root", "consumer"]
+    __slots__ = ["root", "consumers"]
 
-    def __init__(self, root: str, consumer: FileConsumer):
-        self.root = root
-        self.consumer = consumer
+    def __init__(self, root: str, consumers: list[FileConsumer,]):
+        self.root = Path(root)
+        if not consumers:
+            raise ValueError("consumer_list cannot be empty.")
+        self.consumers = consumers
 
-    def list_files(self, root_dir: str = None):
-        current = root_dir or self.root
-        if path.exists(current):
+    def walk_file_tree(self, root_dir: Path = None):
+        """Walks file tree and then passes processing to corresponding methods"""
+        current = Path(root_dir) if root_dir else self.root
+        if not current.exists():
+            logging.warning(f"Path does not exist: {current}")
+            return
+
+        try:
+            self._process_directory(current)
+        except OSError as e:
+            logging.error(f"Error while processing {current}: {e}")
+
+    def _process_directory(self, directory: Path):
+        """Recursively process directory and route to file processing"""
+        stack = [directory]
+
+        while stack:
+            current = stack.pop()
             try:
-                dir_list = [current]
+                for item in current.iterdir():
+                    if item.is_dir():
+                        stack.append(item)
+                        continue
 
-                while dir_list:
-                    current = dir_list.pop()
-                    for item in listdir(current):
-                        full_path = path.join(current, item)
-                        if path.isdir(full_path):
-                            dir_list.append(full_path)
-                            continue
-                        self.consumer.accept(full_path)
+                    self._process_file(item)
             except OSError as e:
-                print(f"Error while processing {current}: {e}")
+                logging.error(f"Failed to access {current}: {e}")
+
+    def _process_file(self, file_path: Path):
+        """Passes file to corresponding consumers"""
+        for consumer in self.consumers:
+            try:
+                if consumer.is_applicable(file_path):
+                    consumer.accept(file_path)
+            except Exception as e:
+                logging.error(f"Error processing {file_path} with {consumer}: {e}")
